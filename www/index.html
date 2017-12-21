@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<!--
+    Copyright (c) 2012-2014 Adobe Systems Incorporated. All rights reserved.
+
+    Licensed to the Apache Software Foundation (ASF) under one
+    or more contributor license agreements.  See the NOTICE file
+    distributed with this work for additional information
+    regarding copyright ownership.  The ASF licenses this file
+    to you under the Apache License, Version 2.0 (the
+    "License"); you may not use this file except in compliance
+    with the License.  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing,
+    software distributed under the License is distributed on an
+    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+     KIND, either express or implied.  See the License for the
+    specific language governing permissions and limitations
+    under the License.
+--> 
+<html>
+    <head>
+        <meta charset="utf-8" />
+		<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <!-- WARNING: for iOS 7, remove the width=device-width and height=device-height attributes. See https://issues.apache.org/jira/browse/CB-4323 -->
+		<link rel="stylesheet" type="text/css" href="css/jquery.mobile-1.4.5.min.css" />
+		<link rel="stylesheet" type="text/css" href="css/index.css" />
+        <script type="text/javascript" src="cordova.js"></script>
+		<script type="text/javascript" src="js/jquery.min.js"></script>
+		<script type="text/javascript" src="js/jquery.cookie.js"></script>
+		<script type="text/javascript" src="js/plugins/Flashlight.js"></script>
+        <title>Maviva App Control de Transporte</title>
+		
+    </head>
+    <body>
+		
+		<div id="zonaFrame" style="width:100%;height:100%;padding:0%;margin:0%;">
+		</div>
+
+    </body>
+	
+	<script type="text/javascript">
+			
+			var numSerie;  // ID del terminal
+			var watchId;
+			var ultimaLectura; // Timestamp de la ultima lectura
+			var ultimaPosicion; // Timestamp de la ultima posicion
+
+			document.addEventListener("deviceready", InitSerial, false);
+	
+			document.addEventListener("backbutton", onBackKeyDown, false);
+			
+			document.addEventListener("resume", onResume, false);
+	
+			
+/* Si pulsa boton atrás se pregunta si quiere cerrar la APP */			
+			function onBackKeyDown() {
+
+				var form = $('#zonaFrame iframe').contents().find('p.evitarcierre').html();
+
+				if (typeof(form) === 'undefined') {
+					MensajeCierreApp();				
+				}
+				else if (form.indexOf('true') <= -1)   {
+					MensajeCierreApp();
+				}
+			}
+
+			function MensajeCierreApp() {			
+				navigator.notification.confirm( "¿Deseas cerrar la aplicación?", 
+						function (button) {
+							if (button==2) {
+								navigator.app.exitApp();
+							}
+						},
+						"SALIR",
+						["NO","SI"]
+					);
+			}
+
+		
+/* Se inicia la aplicación, necesito darle un numero de serie unico para mandar las lecturas de BARCODES a la BBDD con este ID */			
+			function InitSerial() {
+
+				numSerie = device.uuid;	
+				ultimaPosicion = 0;
+				estado = 'N';	
+				
+				var url = "https://transportes.grupomaviva.es/applogin?serial=" + numSerie;
+				var contenido = '<iframe frameborder="0" style="width:99%!important;height:99%!important;margin:0.5%!important;padding:0!important;overflow:hidden;" src="' + url + '">No funciona si se ve esto</iframe>';
+				
+				$('#zonaFrame').html(contenido);
+				
+				watchId = navigator.geolocation.watchPosition(onSuccess, onError, {maximumAge: 3000, timeout: 6000, enableHighAccuracy: false});
+				
+				setTimeout(LecturaBarcode, 6000);
+				
+			}
+            
+// onError Callback receives a PositionError object
+			function onError(error) {
+				comunicarPosicion(error.code,error.message,0,0,0);
+			}
+
+// onSuccess Callback
+// This method accepts a Position object, which contains the current GPS coordinates
+			function onSuccess(position) {
+/*				alert('Latitude: '          + position.coords.latitude          + '\n' +
+					  'Longitude: '         + position.coords.longitude         + '\n' +
+					  'Altitude: '          + position.coords.altitude          + '\n' +
+					  'Accuracy: '          + position.coords.accuracy          + '\n' +
+					  'Altitude Accuracy: ' + position.coords.altitudeAccuracy  + '\n' +
+					  'Heading: '           + position.coords.heading           + '\n' +
+					  'Speed: '             + position.coords.speed             + '\n' +
+					  'Timestamp: '         + position.timestamp                + '\n');*/
+					  
+				var d = new Date();
+				diferencia = d.getTime() - ultimaPosicion;
+
+				if (diferencia > 60000) {
+					if (position.coords.accuracy < 50) {
+						ultimaPosicion = d.getTime();
+					}	
+					comunicarPosicion('OK','',position.coords.latitude,position.coords.longitude,position.coords.accuracy);						
+				}
+			};			
+				
+			
+			function comunicarPosicion(res, error, lat, lon, precision) {
+			
+				archivoValidacion = "https://transportes.grupomaviva.es/posicion.php?jsoncallback=?"
+				
+				$.getJSON( archivoValidacion, { serie: numSerie, res: res, error: error, lat: lat, lon: lon, prec: precision})
+				
+					.done(function(respuestaServer) {
+						
+						if(respuestaServer.validacion != "ok"){
+				  /// ejecutar una conducta cuando la validacion falla
+							alert("Error llamada" + respuestaServer.mensaje);
+						}	
+					})
+						
+					.fail(function() {
+						alert("ERROR LLAMADA");
+					})			
+			}
+
+
+			function LecturaBarcode() {
+				
+				var d = new Date();
+				ultimaLectura = d.getTime();
+				
+				var form = $('#zonaFrame iframe').contents().find('p.leerbarcode').html();
+
+				if (typeof(form) === 'undefined') {
+					setTimeout(LecturaBarcode, 3000);				
+				}
+				else if (form.indexOf('true') > -1)   {
+					LeerBarcode();
+				}
+				else {
+					setTimeout(LecturaBarcode, 3000);
+				}	
+				
+			}
+			
+/* ESCANEO BARCODE, activa el lector y  */			
+			function LeerBarcode() {
+				
+				cordova.plugins.barcodeScanner.scan( function (result) { 
+
+								if (result.cancelled) {
+//									alert("Lectura CANCELADA");
+/*									var url = 'http://192.168.201.138/pistolas/guardabarcode.aspx?serial=' + numSerie + '&barcode=CANCELADA';
+									var contenido = '<iframe frameborder="0" style="width:0%;height:0%;" src="' + url + '">No funciona si se ve esto</iframe>';
+									$("#varsession").html(contenido);
+//									alert("Lectura COMPLETADA");*/
+
+									var url = "https://transportes.grupomaviva.es/appviaje?serial=" + numSerie + '&barcode=CANCELADA';
+									var contenido = '<iframe frameborder="0" style="width:99%!important;height:99%!important;margin:0.5%!important;padding:0!important;overflow:hidden;" src="' + url + '">No funciona si se ve esto</iframe>';
+									
+									$('#zonaFrame').html(contenido);
+
+									setTimeout(LecturaBarcode, 6000);
+								}
+								else {
+//									alert("Lectura OK, " + result.text);
+/*									var url = 'http://192.168.201.138/pistolas/guardabarcode.aspx?serial=' + numSerie + '&barcode=' + result.text;
+									var contenido = '<iframe frameborder="0" style="width:0%;height:0%;" src="' + url + '">No funciona si se ve esto</iframe>';
+									$("#varsession").html(contenido);
+//									alert("Lectura COMPLETADA");*/
+
+									var url = "https://transportes.grupomaviva.es/appviaje?serial=" + numSerie + '&barcode=' + result.text;
+									var contenido = '<iframe frameborder="0" style="width:99%!important;height:99%!important;margin:0.5%!important;padding:0!important;overflow:hidden;" src="' + url + '">No funciona si se ve esto</iframe>';
+									
+									$('#zonaFrame').html(contenido);
+									
+									setTimeout(LecturaBarcode, 6000);
+								} 
+
+								/*
+								alert("We got a barcode\n" + 
+								"Result: " + result.text + "\n" + 
+								"Format: " + result.format + "\n" + 
+								"Cancelled: " + result.cancelled);  
+
+								if (args.format == "QR_CODE") {
+									window.plugins.childBrowser.showWebPage(args.text, { showLocationBar: false });
+								}
+								*/
+
+							}, function (error) { 
+								
+								var url = "https://transportes.grupomaviva.es/appviaje?serial=" + numSerie + '&barcode=ERROR';
+								var contenido = '<iframe frameborder="0" style="width:99%!important;height:99%!important;margin:0.5%!important;padding:0!important;overflow:hidden;" src="' + url + '">No funciona si se ve esto</iframe>';
+								
+								$('#zonaFrame').html(contenido);
+								
+								setTimeout(validarLectura, 6000);		
+							} );	
+
+			}
+
+/* Cada vez que se reactiva la aplicación se valida que funcionen las lecturas y transmitir posicion */			
+			function onResume() {
+
+				var d = new Date();
+				timeStamp = d.getTime();
+
+				var diferencia2 = Math.round((timeStamp - ultimaLectura)/1000); //Tiempo en segundos
+				
+				if (diferencia2 > 15) { 
+					LecturaBarcode();
+				}
+			}			
+	</script>
+</html>
